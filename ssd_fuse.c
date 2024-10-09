@@ -201,7 +201,24 @@ static unsigned int get_next_pca()
 static int ftl_read( char* buf, size_t lba)
 {
     /*  TODO: 1. Check L2P to get PCA 2. Send read data into nand_read */
-
+    if ( lba >= sizeof(L2P) || lba < 0)
+    {
+        printf("Invalid PCA: Out of Index!");
+        return -EINVAL;
+    }
+    else
+    {
+        PCA_RULE pca;
+        pca.pca = get_next_pca();
+        pca.pca = L2P[lba];
+        FILE* fptr;
+        if ( (fptr = fopen(NAND_LOCATION "/ssd_file", "r") ))
+        {
+            fgets(buf, 512, fptr);
+            fclose(fptr);
+        }
+        return pca.pca;
+    }
 }
 
 static int ftl_write(const char* buf, size_t lba_rnage, size_t lba)
