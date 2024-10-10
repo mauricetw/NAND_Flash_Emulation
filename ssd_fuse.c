@@ -187,7 +187,7 @@ static unsigned int get_next_pca()
         return curr_pca.pca;
     }
     // If the SSD is full, a new PCA cannot be allocated
-    else if (curr_pca.pca == FULL_PCA)
+    else if (curr_pca.fields.block == PHYSICAL_NAND_NUM - 1 && curr_pca.fields.page == NAND_SIZE_KB * 1024 / 512)
     {
         printf("No new PCA\n");
         return FULL_PCA;
