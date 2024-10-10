@@ -28,40 +28,44 @@ static size_t logic_size;
 static size_t host_write_size;
 static size_t nand_write_size;
 
+// The union of PCA rules is used to represent the physical address
 typedef union pca_rule PCA_RULE;
 union pca_rule
 {
-    unsigned int pca;
+    unsigned int pca; // Physical Cluster Address
     struct
     {
-        unsigned int page : 16;
-        unsigned int block: 16;
+        unsigned int page : 16; // Page number
+        unsigned int block: 16; // Block number
     } fields;
 };
 
-PCA_RULE curr_pca;
+PCA_RULE curr_pca; // Current PCA
 
-unsigned int* L2P;
+unsigned int* L2P; // Logical to Physical 
 
+// Adjust the logical size of the SSD
 static int ssd_resize(size_t new_size)
 {
-    //set logic size to new_size
+    // Check if the new size exceeds the capacity of the logical NAND
     if (new_size >= LOGICAL_NAND_NUM * NAND_SIZE_KB * 1024  )
     {
+        // Out of memory error
         return -ENOMEM;
     }
     else
     {
+        // Set logic size to new_size
         logic_size = new_size;
         return 0;
     }
 
 }
 
+// Expand the logical size of the SSD
 static int ssd_expand(size_t new_size)
 {
-    //logical size must be less than logic limit
-
+    // Logical size must be less than logic limit
     if (new_size > logic_size)
     {
         return ssd_resize(new_size);
@@ -70,6 +74,7 @@ static int ssd_expand(size_t new_size)
     return 0;
 }
 
+// Read data from NAND
 static int nand_read(char* buf, int pca)
 {
     char nand_name[100];
@@ -77,12 +82,17 @@ static int nand_read(char* buf, int pca)
 
     PCA_RULE my_pca;
     my_pca.pca = pca;
+
+    // Generate the path of NAND file
     snprintf(nand_name, 100, "%s/nand_%d", NAND_LOCATION, my_pca.fields.block);
 
-    //read from nand
+    // Open the corresponding NAND file for reading
     if ( (fptr = fopen(nand_name, "r") ))
     {
+        // Locate the corresponding page
         fseek( fptr, my_pca.fields.page * 512, SEEK_SET );
+
+        // Read 512 bytes of data
         fread(buf, 1, 512, fptr);
         fclose(fptr);
     }
@@ -91,8 +101,11 @@ static int nand_read(char* buf, int pca)
         printf("open file fail at nand read pca = %d\n", pca);
         return -EINVAL;
     }
+    // Return the number of bytes read
     return 512;
 }
+
+// Write data to NAND
 static int nand_write(const char* buf, int pca)
 {
     char nand_name[100];
@@ -100,14 +113,21 @@ static int nand_write(const char* buf, int pca)
 
     PCA_RULE my_pca;
     my_pca.pca = pca;
+
+    // Generate the path of NAND file
     snprintf(nand_name, 100, "%s/nand_%d", NAND_LOCATION, my_pca.fields.block);
 
-    //write to nand
+    // Open the corresponding NAND file for writing
     if ( (fptr = fopen(nand_name, "r+")))
     {
+        // Locate the corresponding page
         fseek( fptr, my_pca.fields.page * 512, SEEK_SET );
+        
+        // Write 512 bytes of data
         fwrite(buf, 1, 512, fptr);
         fclose(fptr);
+        
+        // Update the physical write size
         physic_size ++;
     }
     else
@@ -116,19 +136,24 @@ static int nand_write(const char* buf, int pca)
         return -EINVAL;
     }
 
+    // Update the total amount actually written to NAND
     nand_write_size += 512;
+
+    // Return the number of bytes written
     return 512;
 }
 
+// Erase the specified NAND block
 static int nand_erase(int block)
 {
     char nand_name[100];
 	int found = 0;
     FILE* fptr;
 
+    // Generate the path of the NAND file
     snprintf(nand_name, 100, "%s/nand_%d", NAND_LOCATION, block);
 
-    //erase nand
+    // Open the file in write mode to erase nand
     if ( (fptr = fopen(nand_name, "w")))
     {
         fclose(fptr);
@@ -150,19 +175,20 @@ static int nand_erase(int block)
     return 1;
 }
 
+// Get the next available PCA (physical cluster address)
 static unsigned int get_next_pca()
 {
     /*  TODO: seq A, need to change to seq B */
-	
+
+	// Initialize PCA
     if (curr_pca.pca == INVALID_PCA)
     {
-        //init
         curr_pca.pca = 0;
         return curr_pca.pca;
     }
+    // If the SSD is full, a new PCA cannot be allocated
     else if (curr_pca.pca == FULL_PCA)
     {
-        //ssd is full, no pca can be allocated
         printf("No new PCA\n");
         return FULL_PCA;
     }
@@ -188,57 +214,79 @@ static unsigned int get_next_pca()
     }
     */
     // Seq B
+    // Sequential allocation strategy B
+
+    // If the page of the current block is full, switch to the next block
     if ( curr_pca.fields.page == (NAND_SIZE_KB * 1024 / 512) )
     {
         curr_pca.fields.block = (curr_pca.fields.block + 1 ) % PHYSICAL_NAND_NUM;
         curr_pca.fields.page = 0;
-    } else curr_pca.fields.page += 1;
+    }
+    // Else write to next page 
+    else curr_pca.fields.page += 1;
     printf("PCA = page %d, nand %d\n", curr_pca.fields.page, curr_pca.fields.block);
     return curr_pca.pca;
 
 }
 
+// FTL read operation
 static int ftl_read( char* buf, size_t lba)
 {
     /*  TODO: 1. Check L2P to get PCA 2. Send read data into nand_read */
+    // Check if LBA is out of range
     if ( lba >= sizeof(L2P) || lba < 0)
     {
-        printf("Invalid PCA: Out of Index!");
+        printf("Invalid PCA: Out of Index Range!");
         return -EINVAL;
     }
     else
     {
         PCA_RULE pca;
-        pca.pca = get_next_pca();
-        pca.pca = L2P[lba];
-        FILE* fptr;
-        if ( (fptr = fopen(NAND_LOCATION "/ssd_file", "r") ))
+        // Get the PCA corresponding to LBA
+        pca.pca = L2P[lba]; 
+
+        // If PCA is invalid, it means that the data does not exist
+        if (pca.pca == INVALID_PCA)
         {
-            fgets(buf, 512, fptr);
-            fclose(fptr);
+            printf("Invalid PCA: Data does not exist!\n");
+            return -EINVAL;
         }
-        return pca.pca;
+        
+        // Read data from NAND
+        if (nand_read(buf, pca.pca) != 512)
+        {
+            printf("NAND read failed!\n");
+            return -EIO;
+        }
+
+        // Return the number of bytes read
+        return 512;
     }
 }
 
+// FTL write operation
 static int ftl_write(const char* buf, size_t lba_rnage, size_t lba)
 {
     /*  TODO: only basic write case, need to consider other cases */
+    // Get the next available PCA
     PCA_RULE pca;
     pca.pca = get_next_pca();
 
+    // Write data to NAND
     if (nand_write( buf, pca.pca) > 0)
     {
+        // Update L2P mapping
         L2P[lba] = pca.pca;
         return 512 ;
     }
     else
     {
-        printf(" --> Write fail !!!");
+        printf(" --> Write fail !!!\n");
         return -EINVAL;
     }
 }
 
+// Determine the file type
 static int ssd_file_type(const char* path)
 {
     if (strcmp(path, "/") == 0)
@@ -251,29 +299,44 @@ static int ssd_file_type(const char* path)
     }
     return SSD_NONE;
 }
+
+// Get file attributes
 static int ssd_getattr(const char* path, struct stat* stbuf,
                        struct fuse_file_info* fi)
 {
     (void) fi;
+
+    // User ID of file owner
     stbuf->st_uid = getuid();
+
+    // Group ID of file owner
     stbuf->st_gid = getgid();
+
+    // Access and modification time
     stbuf->st_atime = stbuf->st_mtime = time(NULL);
     switch (ssd_file_type(path))
     {
         case SSD_ROOT:
+            // Directory permissions
             stbuf->st_mode = S_IFDIR | 0755;
             stbuf->st_nlink = 2;
             break;
         case SSD_FILE:
+            // File permissions
             stbuf->st_mode = S_IFREG | 0644;
             stbuf->st_nlink = 1;
+
+            // File size
             stbuf->st_size = logic_size;
             break;
         case SSD_NONE:
+            // File does not exist
             return -ENOENT;
     }
     return 0;
 }
+
+// Open file
 static int ssd_open(const char* path, struct fuse_file_info* fi)
 {
     (void) fi;
@@ -283,36 +346,45 @@ static int ssd_open(const char* path, struct fuse_file_info* fi)
     }
     return -ENOENT;
 }
+
+// Actual implementation of reading data
 static int ssd_do_read(char* buf, size_t size, off_t offset)
 {
     /*  TODO: call ftl_read function and handle result */
     int tmp_lba, tmp_lba_range, rst ;
     char* tmp_buf;
 
-    // out of limit
-    if ((offset ) >= logic_size)
+    // Check if the read range out of limit
+    if ((offset) >= logic_size)
     {
         return 0;
     }
     if ( size > logic_size - offset)
     {
-        //is valid data section
+        // Adjust read size
         size = logic_size - offset;
     }
 
+    // Calculate the starting LBA
     tmp_lba = offset / 512;
+
+    // Calculate the number of LBAs to be read
 	tmp_lba_range = (offset + size - 1) / 512 - (tmp_lba) + 1;
     tmp_buf = calloc(tmp_lba_range * 512, sizeof(char));
 
     for (int i = 0; i < tmp_lba_range; i++) {
         // TODO
+        ftl_read(tmp_buf + i * 512,tmp_lba + i);
     }
 
+    //Copy data to user buffer
     memcpy(buf, tmp_buf + offset % 512, size);
 
     free(tmp_buf);
     return size;
 }
+
+// Read file
 static int ssd_read(const char* path, char* buf, size_t size,
                     off_t offset, struct fuse_file_info* fi)
 {
@@ -323,6 +395,8 @@ static int ssd_read(const char* path, char* buf, size_t size,
     }
     return ssd_do_read(buf, size, offset);
 }
+
+// Actual write file
 static int ssd_do_write(const char* buf, size_t size, off_t offset)
 {
     /*  TODO: only basic write case, need to consider other cases */
@@ -330,13 +404,19 @@ static int ssd_do_write(const char* buf, size_t size, off_t offset)
     int tmp_lba, tmp_lba_range, process_size;
     int idx, curr_size, remain_size, rst;
 
+    // Update the total amount of data written by the host
     host_write_size += size;
+
+    // Check and expand the logical size
     if (ssd_expand(offset + size) != 0)
     {
         return -ENOMEM;
     }
 
+    // Starting LBA
     tmp_lba = offset / 512;
+
+    // Number of LBAs to be written
     tmp_lba_range = (offset + size - 1) / 512 - (tmp_lba) + 1;
 
     process_size = 0;
@@ -344,18 +424,18 @@ static int ssd_do_write(const char* buf, size_t size, off_t offset)
     curr_size = 0;
     for (idx = 0; idx < tmp_lba_range; idx++)
     {
-        /*  example only align 512, need to implement other cases  */
+        /*  Example only align 512, need to implement other cases  */
         if(offset % 512 == 0 && size % 512 == 0)
         {
             rst = ftl_write(buf + process_size, 1, tmp_lba + idx);
             if ( rst == 0 )
             {
-                //write full return -enomem;
+                // Full return error
                 return -ENOMEM;
             }
             else if (rst < 0)
             {
-                //error
+                // Error
                 return rst;
             }
             curr_size += 512;
@@ -371,6 +451,8 @@ static int ssd_do_write(const char* buf, size_t size, off_t offset)
 
     return size;
 }
+
+// Write file
 static int ssd_write(const char* path, const char* buf, size_t size,
                      off_t offset, struct fuse_file_info* fi)
 {
@@ -381,6 +463,8 @@ static int ssd_write(const char* path, const char* buf, size_t size,
     }
     return ssd_do_write(buf, size, offset);
 }
+
+// Truncate file
 static int ssd_truncate(const char* path, off_t size,
                         struct fuse_file_info* fi)
 {
@@ -392,6 +476,8 @@ static int ssd_truncate(const char* path, off_t size,
 
     return ssd_resize(size);
 }
+
+// Read directory
 static int ssd_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
                        off_t offset, struct fuse_file_info* fi,
                        enum fuse_readdir_flags flags)
@@ -403,11 +489,16 @@ static int ssd_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
     {
         return -ENOENT;
     }
+    // Current directory
     filler(buf, ".", NULL, 0, 0);
+    // Upper-level directory
     filler(buf, "..", NULL, 0, 0);
+    // SSD file
     filler(buf, SSD_NAME, NULL, 0, 0);
     return 0;
 }
+
+// Handle ioctl command
 static int ssd_ioctl(const char* path, unsigned int cmd, void* arg,
                      struct fuse_file_info* fi, unsigned int flags, void* data)
 {
@@ -436,6 +527,8 @@ static int ssd_ioctl(const char* path, unsigned int cmd, void* arg,
     }
     return -EINVAL;
 }
+
+// Define FUSE operation
 static const struct fuse_operations ssd_oper =
 {
     .getattr        = ssd_getattr,
@@ -446,6 +539,7 @@ static const struct fuse_operations ssd_oper =
     .write          = ssd_write,
     .ioctl          = ssd_ioctl,
 };
+
 int main(int argc, char* argv[])
 {
     int idx;
@@ -455,10 +549,14 @@ int main(int argc, char* argv[])
 	nand_write_size = 0;
 	host_write_size = 0;
     curr_pca.pca = INVALID_PCA;
+
+    // Allocate memory space for L2P mapping table
     L2P = malloc(LOGICAL_NAND_NUM * NAND_SIZE_KB * 1024 / 512 * sizeof(int));
+    
+    // Initialize L2P mapping table
     memset(L2P, INVALID_PCA, sizeof(int)*LOGICAL_NAND_NUM * NAND_SIZE_KB * 1024 / 512);
 
-    //create nand file
+    // Create nand file
     for (idx = 0; idx < PHYSICAL_NAND_NUM; idx++)
     {
         FILE* fptr;
@@ -470,5 +568,7 @@ int main(int argc, char* argv[])
         }
         fclose(fptr);
     }
+
+    // Start FUSE file system
     return fuse_main(argc, argv, &ssd_oper, NULL);
 }
