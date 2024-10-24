@@ -8,12 +8,15 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <sys/ioctl.h>
+#include <limits.h>
 #define PHYSICAL_NAND_NUM (8)
 #define LOGICAL_NAND_NUM (5)
 #define NAND_SIZE_KB (10)
-#define INVALID_PCA     (0xFFFFFFFF)
-#define FULL_PCA     (0xFFFFFFFE)
-#define NAND_LOCATION  "/home/zhi/Desktop/ssd_fuse"
+#define INVALID_PCA  (0xFFFFFFFFU)
+#define FULL_PCA     (0xFFFFFFFFU)
+#define INVALID_LBA (0xFFFFFFFFU)
+#define PAGES_PER_BLOCK (NAND_SIZE_KB * 1024 / 512)
+#define NAND_LOCATION  "/home/stanwang/Desktop/NAND_Flash_Emulation/nand"
 
 enum
 {
